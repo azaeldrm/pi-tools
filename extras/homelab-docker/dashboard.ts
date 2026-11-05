@@ -1,0 +1,219 @@
+/** Menu-driven /homelab dashboard using Pi's built-in select UI. */
+
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import {
+	checkService,
+	DEFAULT_LOG_TAIL,
+	executeHomelabAction,
+	health,
+	listServices,
+	parseJsonLines,
+	requireBaseDir,
+	resolveBaseDirInfo,
+	truncateCell,
+	type ComposePsRow,
+	type HomelabAction,
+	type HomelabFlags,
+} from "./tools.ts";
+
+interface ServiceRow {
+	name: string;
+	label: string;
+}
+
+interface VisibilityConfig {
+	repos?: Record<string, { hidden?: string[] }>;
+}
+
+const VISIBILITY_CONFIG_PATH = path.join(os.homedir(), ".pi", "agent", "homelab-docker", "visibility.json");
+
+function loadVisibilityConfig(): VisibilityConfig {
+	try {
+		return JSON.parse(fs.readFileSync(VISIBILITY_CONFIG_PATH, "utf8")) as VisibilityConfig;
+	} catch {
+		return { repos: {} };
+	}
+}
+
+function saveVisibilityConfig(config: VisibilityConfig) {
+	fs.mkdirSync(path.dirname(VISIBILITY_CONFIG_PATH), { recursive: true });
+	fs.writeFileSync(VISIBILITY_CONFIG_PATH, JSON.stringify(config, null, 2), "utf8");
+}
+
+export function hiddenServices(baseDir: string): Set<string> {
+	return new Set(loadVisibilityConfig().repos?.[baseDir]?.hidden ?? []);
+}
+
+export function setServiceHidden(baseDir: string, service: string, hidden: boolean) {
+	const config = loadVisibilityConfig();
+	config.repos ??= {};
+	const repo = (config.repos[baseDir] ??= {});
+	const current = new Set(repo.hidden ?? []);
+	if (hidden) current.add(service);
+	else current.delete(service);
+	repo.hidden = Array.from(current).sort();
+	saveVisibilityConfig(config);
+}
+
+function summarizeRows(rows: ComposePsRow[]): { icon: string; count: string; state: string; status: string } {
+	if (rows.length === 0) return { icon: "○", count: "0/0", state: "down", status: "no containers" };
+	const running = rows.filter((row) => /running/i.test(row.State ?? "") || /\bUp\b/i.test(row.Status ?? "")).length;
+	const attention = rows.some((row) => /unhealthy|restart|exited|dead|error/i.test(`${row.State ?? ""} ${row.Status ?? ""} ${health(row)}`));
+	const starting = rows.some((row) => /starting|created|paused/i.test(`${row.State ?? ""} ${row.Status ?? ""} ${health(row)}`));
+	const firstStatus = rows.find((row) => row.Status)?.Status ?? rows[0]?.State ?? "unknown";
+	if (attention) return { icon: "✗", count: `${running}/${rows.length}`, state: "attention", status: firstStatus };
+	if (starting) return { icon: "!", count: `${running}/${rows.length}`, state: "starting", status: firstStatus };
+	if (running === rows.length) return { icon: "✓", count: `${running}/${rows.length}`, state: "running", status: firstStatus };
+	if (running > 0) return { icon: "!", count: `${running}/${rows.length}`, state: "partial", status: firstStatus };
+	return { icon: "○", count: `${running}/${rows.length}`, state: "stopped", status: firstStatus };
+}
+
+async function serviceSummary(pi: ExtensionAPI, baseDir: string, service: string): Promise<{ icon: string; count: string; state: string; status: string }> {
+	const checked = checkService(baseDir, service);
+	if (!checked.ok) return { icon: "?", count: "?", state: "invalid", status: "missing compose" };
+	const compose = `${baseDir}/${service}/docker-compose.yml`;
+	try {
+		const res = await pi.exec("docker", ["compose", "-f", compose, "ps", "--format", "json"], { cwd: baseDir, timeout: 10_000 });
+		if (res.code !== 0 || !res.stdout.trim()) return { icon: "○", count: "0/0", state: "down", status: "no containers" };
+		return summarizeRows(parseJsonLines(res.stdout));
+	} catch {
+		return { icon: "?", count: "?", state: "unknown", status: "status unavailable" };
+	}
+}
+
+async function buildServiceRows(pi: ExtensionAPI, baseDir: string, includeHidden = false): Promise<ServiceRow[]> {
+	const hidden = hiddenServices(baseDir);
+	const services = listServices(baseDir).filter((service) => includeHidden || !hidden.has(service));
+	return Promise.all(
+		services.map(async (service) => {
+			const summary = await serviceSummary(pi, baseDir, service);
+			const label = `${summary.icon} ${truncateCell(service, 24).padEnd(24)} ${summary.count.padEnd(5)} ${summary.state.padEnd(10)} ${truncateCell(summary.status, 36)}`;
+			return { name: service, label };
+		}),
+	);
+}
+
+function parseAction(choice: string): { action: HomelabAction; tail?: number; flags?: HomelabFlags } | null {
+	switch (choice) {
+		case `Logs (tail ${DEFAULT_LOG_TAIL})`:
+			return { action: "logs", tail: DEFAULT_LOG_TAIL };
+		case "Logs (tail 200)":
+			return { action: "logs", tail: 200 };
+		case "Up":
+			return { action: "up" };
+		case "Restart":
+			return { action: "restart" };
+		case "Down / stop service":
+			return { action: "down" };
+		default:
+			return null;
+	}
+}
+
+export interface DashboardActionRunner {
+	(command: string, params: { action: HomelabAction; service?: string; flags?: HomelabFlags; tail?: number }): Promise<void>;
+}
+
+async function selectedServiceStatus(pi: ExtensionAPI, ctx: ExtensionContext, service: string): Promise<string> {
+	try {
+		const result = await executeHomelabAction(pi, ctx.cwd, { action: "status", service });
+		return result.text;
+	} catch (err) {
+		return `Status unavailable: ${err instanceof Error ? err.message : String(err)}`;
+	}
+}
+
+async function manageVisibility(pi: ExtensionAPI, ctx: ExtensionContext, baseDir: string): Promise<void> {
+	while (true) {
+		const all = await buildServiceRows(pi, baseDir, true);
+		const hidden = hiddenServices(baseDir);
+		const labels = all.map((row) => `${hidden.has(row.name) ? "○ hidden " : "✓ shown  "}${row.label}`);
+		const choice = await ctx.ui.select(
+			[
+				"Manage Homelab Visibility",
+				"",
+				"Toggle which service directories appear in the main /homelab dashboard on this machine.",
+				`Config: ${VISIBILITY_CONFIG_PATH}`,
+			].join("\n"),
+			[...labels, "Back"],
+		);
+		if (!choice || choice === "Back") return;
+		const index = labels.indexOf(choice);
+		if (index < 0) continue;
+		const service = all[index].name;
+		setServiceHidden(baseDir, service, !hidden.has(service));
+	}
+}
+
+async function serviceActionLoop(pi: ExtensionAPI, ctx: ExtensionContext, service: string, runAction: DashboardActionRunner): Promise<"back" | "refresh" | "quit"> {
+	while (true) {
+		const status = await selectedServiceStatus(pi, ctx, service);
+		const choice = await ctx.ui.select(`${service} — current status\n\n${status}\n\nChoose action`, [
+			`Logs (tail ${DEFAULT_LOG_TAIL})`,
+			"Logs (tail 200)",
+			"Up",
+			"Restart",
+			"Down / stop service",
+			"Back",
+			"Refresh",
+			"Quit",
+		]);
+		if (!choice || choice === "Back") return "back";
+		if (choice === "Refresh") return "refresh";
+		if (choice === "Quit") return "quit";
+
+		const action = parseAction(choice);
+		if (!action) continue;
+		await runAction(`homelab ${action.action} ${service}${action.tail ? ` ${action.tail}` : ""}`, {
+			action: action.action,
+			service,
+			flags: action.flags,
+			tail: action.tail,
+		});
+	}
+}
+
+export async function runHomelabDashboard(pi: ExtensionAPI, ctx: ExtensionContext, runAction: DashboardActionRunner): Promise<void> {
+	if (!ctx.hasUI) {
+		ctx.ui.notify("/homelab dashboard requires an interactive UI. Use /homelab list in headless contexts.", "error");
+		return;
+	}
+
+	let baseDir: string;
+	try {
+		baseDir = requireBaseDir(ctx.cwd);
+	} catch (err) {
+		ctx.ui.notify(err instanceof Error ? err.message : String(err), "error");
+		return;
+	}
+	const { source } = resolveBaseDirInfo(ctx.cwd);
+	while (true) {
+		const rows = await buildServiceRows(pi, baseDir);
+		const hiddenCount = hiddenServices(baseDir).size;
+		const labels = rows.map((row) => row.label);
+		const title = [
+			"Homelab Services",
+			`  ${baseDir} (${source})`,
+			"",
+			"  SERVICE                  CNT   STATE      STATUS",
+			"  ─────────────────────────────────────────────────────────────",
+			hiddenCount > 0 ? `  (${hiddenCount} hidden on this machine; use Manage visibility to toggle)` : "",
+		].filter(Boolean).join("\n");
+		const choice = await ctx.ui.select(title, [...labels, "Refresh", "Manage visibility", "Quit"]);
+		if (!choice || choice === "Quit") return;
+		if (choice === "Refresh") continue;
+		if (choice === "Manage visibility") {
+			await manageVisibility(pi, ctx, baseDir);
+			continue;
+		}
+
+		const row = rows.find((candidate) => candidate.label === choice);
+		if (!row) continue;
+		const next = await serviceActionLoop(pi, ctx, row.name, runAction);
+		if (next === "quit") return;
+		if (next === "refresh") continue;
+	}
+}

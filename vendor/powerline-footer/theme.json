@@ -1,0 +1,30 @@
+{
+  "colors": {
+    "model": "accent",
+    "shellMode": "accent",
+    "path": "text",
+    "gitClean": "success",
+    "gitDirty": "warning",
+    "thinking": "thinkingOff",
+    "thinkingMinimal": "thinkingMinimal",
+    "thinkingLow": "thinkingLow",
+    "thinkingMedium": "thinkingMedium",
+    "thinkingHigh": "thinkingHigh",
+    "thinkingXhigh": "thinkingXhigh",
+    "thinkingMax": "thinkingMax",
+    "context": "accent",
+    "contextWarn": "warning",
+    "contextError": "error",
+    "cost": "text",
+    "tokens": "muted"
+  },
+  "icons": {
+    "model": "π",
+    "folder": "\uf115",
+    "cache": "\uf1c0",
+    "cost": "\uf155",
+    "input": "\uf090",
+    "output": "\uf08b",
+    "context": "\uf0e4"
+  }
+}

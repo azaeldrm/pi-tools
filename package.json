@@ -1,0 +1,57 @@
+{
+  "name": "azaeldrm-pi-tools",
+  "version": "0.1.0",
+  "description": "Portable Pi coding-agent extensions, prompts, themes, and statusline tools used across azaeldrm's machines.",
+  "type": "module",
+  "license": "MIT",
+  "private": false,
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-extension",
+    "pi-tools"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/azaeldrm/pi-tools.git"
+  },
+  "files": [
+    "extensions/**/*",
+    "vendor/**/*",
+    "extras/**/*",
+    "prompts/**/*",
+    "themes/**/*",
+    "README.md",
+    "LICENSE",
+    "THIRD-PARTY.md",
+    "install.sh"
+  ],
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-agent-core": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/context-meter.ts",
+      "./extensions/harness-context.ts",
+      "./extensions/inline-bash.ts",
+      "./extensions/local-hardware.ts",
+      "./extensions/permission-gate.ts",
+      "./extensions/protected-paths.ts",
+      "./extensions/working-indicator.ts",
+      "./extensions/procession-banner/index.ts",
+      "./extensions/subagent/index.ts",
+      "./vendor/powerline-footer/index.ts",
+      "./vendor/pi-github-pr/dist/index.ts"
+    ],
+    "prompts": [
+      "./prompts/*.md"
+    ],
+    "themes": [
+      "./themes/*.json"
+    ]
+  }
+}

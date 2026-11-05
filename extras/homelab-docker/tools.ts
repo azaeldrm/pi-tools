@@ -1,0 +1,702 @@
+/**
+ * homelab — Docker homelab service tool (global Pi extension).
+ *
+ * Loads from `~/.pi/agent/extensions/` so it works from any directory: the
+ * repo to act on is resolved by `resolveBaseDir`, never assumed from cwd.
+ *
+ * One `homelab` tool with a single `action` enum keeps the LLM-facing schema
+ * compact and centralizes all validation and rendering here:
+ *
+ *   list     all containers (docker ps -a)
+ *   status   global container status, or per-service compose ps
+ *   logs     per-service log tail (truncated to 50KB / 2000 lines)
+ *   up       ./manage-container.sh <svc> u   [p|b|pb]
+ *   restart  ./manage-container.sh <svc> r   [p|b|pb]
+ *   down     ./manage-container.sh <svc> d   (gated by permission-gate)
+ *
+ * up/restart/down wrap ./manage-container.sh instead of re-implementing it:
+ * the script stays the single source of truth for stack actions (pull/build
+ * policy, per-stack cleanup), so `homelab` behaves exactly like the `mc`
+ * alias. Read-only actions (list/status/logs) call docker directly.
+ *
+ * All validation and command construction is exported as pure functions so
+ * it can be unit-tested without Pi.
+ */
+
+import * as fs from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
+import {
+	DEFAULT_MAX_BYTES,
+	DEFAULT_MAX_LINES,
+	formatSize,
+	truncateTail,
+	withFileMutationQueue,
+	type ExtensionAPI,
+	type TruncationResult,
+} from "@earendil-works/pi-coding-agent";
+import { StringEnum } from "@earendil-works/pi-ai";
+import { Text } from "@earendil-works/pi-tui";
+import { Type } from "typebox";
+
+// ─── Constants ───────────────────────────────────────────────────────────
+
+export const DEFAULT_LOG_TAIL = 50;
+export const MAX_LOG_TAIL = DEFAULT_MAX_LINES; // 2000
+export const DEFAULT_TIMEOUT_MS = 120_000;
+export const LONG_TIMEOUT_MS = 600_000;
+export const PROGRESS_INTERVAL_MS = 5_000;
+export const AUTO_DENY_TIMEOUT_MS = 60_000;
+export const MANAGE_SCRIPT = "manage-container.sh";
+
+/** Env override for the homelab repo root (highest priority). */
+export const HOMELAB_DIR_ENV = "HOMELAB_DOCKER_DIR";
+/** Last-resort canonical location of this server's Docker homelab repo. */
+export const DEFAULT_HOMELAB_DIR = "/srv/homelab/docker";
+/** Shared per-machine config, alongside visibility.json. */
+export const HOMELAB_CONFIG_PATH = path.join(os.homedir(), ".pi", "agent", "homelab-docker", "config.json");
+
+export type HomelabAction = "status" | "list" | "logs" | "up" | "restart" | "down";
+export type HomelabFlags = "p" | "b" | "pb";
+
+const SERVICE_ACTIONS: HomelabAction[] = ["logs", "up", "restart", "down"];
+const DOCKER_JSON_FORMAT = "json";
+
+// ─── Base dir resolution (testable) ──────────────────────────────────────
+
+/** A homelab repo root is any directory that contains manage-container.sh. */
+export function isHomelabRoot(dir: string | undefined): dir is string {
+	return Boolean(dir) && fs.existsSync(path.join(dir as string, MANAGE_SCRIPT));
+}
+
+/** Nearest ancestor of `startDir` (inclusive) that is a homelab root. */
+export function findHomelabRootUp(startDir: string): string | undefined {
+	let dir = path.resolve(startDir);
+	for (;;) {
+		if (isHomelabRoot(dir)) return dir;
+		const parent = path.dirname(dir);
+		if (parent === dir) return undefined;
+		dir = parent;
+	}
+}
+
+/** Read `{ "baseDir": "..." }` from the shared config, if present. */
+export function readConfigBaseDir(configPath: string = HOMELAB_CONFIG_PATH): string | undefined {
+	try {
+		const raw = JSON.parse(fs.readFileSync(configPath, "utf8")) as { baseDir?: unknown };
+		const dir = typeof raw?.baseDir === "string" ? raw.baseDir.trim() : "";
+		return dir ? path.resolve(dir) : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+export type BaseDirSource = "env" | "cwd" | "config" | "default" | "fallback";
+
+export interface BaseDirResolution {
+	baseDir: string;
+	source: BaseDirSource;
+}
+
+/**
+ * Resolve which homelab repo to act on, independent of the current directory:
+ *
+ *   env     $HOMELAB_DOCKER_DIR (explicit override, always wins)
+ *   cwd     nearest ancestor of cwd containing manage-container.sh, so a second
+ *           checkout or worktree still wins while you are inside it
+ *   config  { "baseDir": "…" } in ~/.pi/agent/homelab-docker/config.json
+ *   default DEFAULT_HOMELAB_DIR when it exists
+ *   fallback cwd (only when nothing resolves; callers surface a clear error)
+ */
+export function resolveBaseDirInfo(startDir: string, env: NodeJS.ProcessEnv = process.env): BaseDirResolution {
+	const fromEnv = (env[HOMELAB_DIR_ENV] ?? "").trim();
+	if (fromEnv) return { baseDir: path.resolve(fromEnv), source: "env" };
+
+	const fromCwd = findHomelabRootUp(startDir);
+	if (fromCwd) return { baseDir: fromCwd, source: "cwd" };
+
+	const fromConfig = readConfigBaseDir();
+	if (fromConfig) return { baseDir: fromConfig, source: "config" };
+
+	if (isHomelabRoot(DEFAULT_HOMELAB_DIR)) return { baseDir: DEFAULT_HOMELAB_DIR, source: "default" };
+	return { baseDir: path.resolve(startDir), source: "fallback" };
+}
+
+export function resolveBaseDir(startDir: string): string {
+	return resolveBaseDirInfo(startDir).baseDir;
+}
+
+/**
+ * Like `resolveBaseDir`, but fails with setup instructions instead of silently
+ * pointing at an unrelated directory. Use before any action that needs the repo.
+ */
+export function requireBaseDir(startDir: string): string {
+	const { baseDir, source } = resolveBaseDirInfo(startDir);
+	if (isHomelabRoot(baseDir)) return baseDir;
+	throw new Error(
+		`Could not locate the Docker homelab repo (no ${MANAGE_SCRIPT} in ${baseDir}, resolved via ${source}).\n\n` +
+			`Point it at the repo with either:\n` +
+			`  export ${HOMELAB_DIR_ENV}=/path/to/homelab/docker\n` +
+			`  echo '{"baseDir":"/path/to/homelab/docker"}' > ${HOMELAB_CONFIG_PATH}`,
+	);
+}
+
+// ─── Service discovery / validation (pure) ───────────────────────────────
+
+/** Service names: top-level dirs under baseDir containing docker-compose.yml. */
+export function listServices(baseDir: string): string[] {
+	try {
+		return fs
+			.readdirSync(baseDir, { withFileTypes: true })
+			.filter((e) => e.isDirectory())
+			.filter((e) => fs.existsSync(path.join(baseDir, e.name, "docker-compose.yml")))
+			.map((e) => e.name)
+			.sort();
+	} catch {
+		return [];
+	}
+}
+
+export type ServiceCheck =
+	| { ok: true; name: string; dir: string }
+	| { ok: false; error: string };
+
+/** Validate that `service` is a top-level dir under baseDir with docker-compose.yml. */
+export function checkService(baseDir: string, service: string): ServiceCheck {
+	const name = (service ?? "").trim().replace(/\/+$/, "");
+	if (!name || name.startsWith("-") || name === "." || name === ".." || name.includes("/") || name.includes("\0")) {
+		return {
+			ok: false,
+			error: `Invalid service name "${service}". A service is a top-level directory under ${baseDir} containing a docker-compose.yml.`,
+		};
+	}
+	const dir = path.join(baseDir, name);
+	if (!fs.existsSync(path.join(dir, "docker-compose.yml"))) {
+		const valid = listServices(baseDir);
+		return {
+			ok: false,
+			error: `"${name}" is not a valid service (no ${path.join(name, "docker-compose.yml")}). Valid services: ${
+				valid.length ? valid.join(", ") : "(none found)"
+			}`,
+		};
+	}
+	return { ok: true, name, dir };
+}
+
+// ─── Parameter validation (pure) ─────────────────────────────────────────
+
+export type ParamsCheck =
+	| { ok: true; action: HomelabAction; service?: string; flags?: HomelabFlags; tail: number }
+	| { ok: false; error: string };
+
+/** Cross-field validation. The JSON schema constrains types; this adds action/field rules. */
+export function checkParams(action: HomelabAction, service?: string, flags?: HomelabFlags, tail?: number): ParamsCheck {
+	const svc = service?.trim() || undefined;
+	if (SERVICE_ACTIONS.includes(action) && !svc) {
+		return { ok: false, error: `action "${action}" requires a service` };
+	}
+	if (flags && action !== "up" && action !== "restart") {
+		return { ok: false, error: `flags (${flags}) are only valid for up/restart, not "${action}"` };
+	}
+	const t = tail ?? DEFAULT_LOG_TAIL;
+	if (!Number.isInteger(t) || t < 1 || t > MAX_LOG_TAIL) {
+		return { ok: false, error: `tail must be an integer between 1 and ${MAX_LOG_TAIL}` };
+	}
+	return { ok: true, action, service: svc, flags, tail: t };
+}
+
+// ─── Command construction (pure) ─────────────────────────────────────────
+
+export interface HomelabCommand {
+	command: string;
+	args: string[];
+	cwd: string;
+	timeoutMs: number;
+	/** Human-facing label used for progress updates and error messages. */
+	progressLabel: string;
+}
+
+/** Build the exact command for an action. Caller must run checkParams/checkService first. */
+export function buildCommand(
+	baseDir: string,
+	action: HomelabAction,
+	service?: string,
+	flags?: HomelabFlags,
+	tail?: number,
+): HomelabCommand {
+	const composeFile = (s: string) => path.join(baseDir, s, "docker-compose.yml");
+	const base = { cwd: baseDir, timeoutMs: DEFAULT_TIMEOUT_MS };
+
+	switch (action) {
+		case "list":
+			return { command: "docker", args: ["ps", "-a", "--format", DOCKER_JSON_FORMAT], ...base, progressLabel: "Listing containers" };
+		case "status":
+			if (!service) {
+				return { command: "docker", args: ["ps", "--format", DOCKER_JSON_FORMAT], ...base, progressLabel: "Collecting container status" };
+			}
+			return {
+				command: "docker",
+				args: ["compose", "-f", composeFile(service), "ps", "--format", "json"],
+				...base,
+				progressLabel: `Status for ${service}`,
+			};
+		case "logs":
+			return {
+				command: "docker",
+				args: ["compose", "-f", composeFile(service!), "logs", "--tail", String(tail ?? DEFAULT_LOG_TAIL), "--no-color"],
+				...base,
+				progressLabel: `Reading logs for ${service}`,
+			};
+		case "up":
+		case "restart": {
+			const long = Boolean(flags);
+			const label = long
+				? `Pulling/building ${service}`
+				: action === "up"
+					? `Starting ${service}`
+					: `Restarting ${service}`;
+			return {
+				command: `./${MANAGE_SCRIPT}`,
+				args: [service!, action === "up" ? "u" : "r", ...(flags ? [flags] : [])],
+				cwd: baseDir,
+				timeoutMs: long ? LONG_TIMEOUT_MS : DEFAULT_TIMEOUT_MS,
+				progressLabel: label,
+			};
+		}
+		case "down":
+			return {
+				command: `./${MANAGE_SCRIPT}`,
+				args: [service!, "d"],
+				...base,
+				progressLabel: `Stopping ${service}`,
+			};
+	}
+}
+
+// ─── Execution (runner injected for testability) ─────────────────────────
+
+export interface ExecRun {
+	(
+		command: string,
+		args: string[],
+		options: { signal?: AbortSignal; timeout?: number; cwd?: string },
+	): Promise<{ stdout: string; stderr: string; code: number; killed: boolean }>;
+}
+
+export type ExecOutcome =
+	| { ok: true; output: string }
+	| { ok: false; error: string; output: string; timedOut: boolean };
+
+/** Run a built command with timeout, abort support, and periodic progress ticks. */
+export async function execHomelabCommand(
+	run: ExecRun,
+	cmd: HomelabCommand,
+	signal: AbortSignal | undefined,
+	onProgress?: (label: string, elapsedMs: number) => void,
+): Promise<ExecOutcome> {
+	const startedAt = Date.now();
+	let tick: ReturnType<typeof setInterval> | undefined;
+	if (onProgress) {
+		tick = setInterval(() => onProgress(cmd.progressLabel, Date.now() - startedAt), PROGRESS_INTERVAL_MS);
+	}
+	try {
+		const res = await run(cmd.command, cmd.args, { signal, timeout: cmd.timeoutMs, cwd: cmd.cwd });
+		const output = [res.stdout, res.stderr].filter(Boolean).join("\n").trimEnd();
+		if (signal?.aborted) {
+			return { ok: false, error: `${cmd.progressLabel} cancelled`, output, timedOut: false };
+		}
+		if (res.killed) {
+			return {
+				ok: false,
+				error: `${cmd.progressLabel} timed out after ${Math.round(cmd.timeoutMs / 1000)}s`,
+				output,
+				timedOut: true,
+			};
+		}
+		if (res.code !== 0) {
+			return { ok: false, error: `${cmd.progressLabel} failed with exit code ${res.code}`, output, timedOut: false };
+		}
+		return { ok: true, output };
+	} catch (err) {
+		return { ok: false, error: err instanceof Error ? err.message : String(err), output: "", timedOut: false };
+	} finally {
+		if (tick) clearInterval(tick);
+	}
+}
+
+// ─── Log truncation ──────────────────────────────────────────────────────
+
+export interface LogDetails {
+	truncated: boolean;
+	truncatedBy: "lines" | "bytes" | null;
+	totalLines: number;
+	totalBytes: number;
+	outputLines: number;
+	outputBytes: number;
+	fullOutputPath?: string;
+}
+
+/**
+ * Truncate log output to 50KB / 2000 lines (keep the tail). When truncated,
+ * save the full output to a temp file so nothing is lost.
+ */
+export async function processLogOutput(fullOutput: string, service: string): Promise<{ text: string; details: LogDetails }> {
+	const trunc: TruncationResult = truncateTail(fullOutput, { maxLines: DEFAULT_MAX_LINES, maxBytes: DEFAULT_MAX_BYTES });
+	const details: LogDetails = {
+		truncated: trunc.truncated,
+		truncatedBy: trunc.truncatedBy,
+		totalLines: trunc.totalLines,
+		totalBytes: trunc.totalBytes,
+		outputLines: trunc.outputLines,
+		outputBytes: trunc.outputBytes,
+	};
+	if (trunc.truncated) {
+		const safe = service.replace(/[^a-zA-Z0-9_-]/g, "_");
+		const dir = await mkdtemp(path.join(os.tmpdir(), "pi-homelab-logs-"));
+		const file = path.join(dir, `logs-${safe}-${Date.now()}.txt`);
+		await withFileMutationQueue(file, () => writeFile(file, fullOutput, "utf8"));
+		details.fullOutputPath = file;
+	}
+	return { text: trunc.content, details };
+}
+
+// ─── Tool details (rendering payload) ────────────────────────────────────
+
+export interface HomelabDetails {
+	action: HomelabAction;
+	service?: string;
+	flags?: HomelabFlags;
+	tail?: number;
+	lineCount: number;
+	durationMs: number;
+	logs?: LogDetails;
+	structured?: boolean;
+}
+
+export interface ComposePsRow {
+	Name?: string;
+	Names?: string;
+	Service?: string;
+	State?: string;
+	Status?: string;
+	Health?: string;
+	HealthStatus?: string;
+	Ports?: string;
+	RunningFor?: string;
+	Image?: string;
+	Labels?: string;
+}
+
+export function truncateCell(value: string, max: number): string {
+	if (value.length <= max) return value;
+	return `${value.slice(0, Math.max(0, max - 1))}…`;
+}
+
+export function parseJsonLines(output: string): ComposePsRow[] {
+	return output
+		.split("\n")
+		.map((line) => line.trim())
+		.filter(Boolean)
+		.map((line) => {
+			try {
+				return JSON.parse(line) as ComposePsRow;
+			} catch {
+				return null;
+			}
+		})
+		.filter((row): row is ComposePsRow => Boolean(row));
+}
+
+function labelValue(labels: string | undefined, key: string): string | undefined {
+	if (!labels) return undefined;
+	const prefix = `${key}=`;
+	return labels.split(",").find((label) => label.startsWith(prefix))?.slice(prefix.length);
+}
+
+export function health(row: ComposePsRow): string {
+	const h = row.Health ?? row.HealthStatus;
+	if (h && h !== "none") return h;
+	const match = row.Status?.match(/\((healthy|unhealthy|starting)\)/i);
+	return match?.[1] ?? "";
+}
+
+function normalizePorts(ports: string | undefined): string {
+	const value = (ports ?? "").replaceAll("0.0.0.0:", "").replaceAll("[::]:", "").trim();
+	return value || "none";
+}
+
+function stateIcon(row: ComposePsRow): string {
+	const value = `${row.State ?? ""} ${row.Status ?? ""} ${health(row)}`.toLowerCase();
+	if (/unhealthy|exited|dead|restarting|error/.test(value)) return "✗";
+	if (/starting|created|paused/.test(value)) return "!";
+	if (/running|up|healthy/.test(value)) return "✓";
+	return "?";
+}
+
+function cardWidth(rows: ComposePsRow[]): number {
+	const longestName = Math.max(18, ...rows.map((row) => (row.Name ?? row.Names ?? "").length));
+	return Math.min(88, Math.max(64, longestName + 42));
+}
+
+function cardLine(label: string, value: string, width: number): string {
+	const body = ` ${label.padEnd(10)} ${truncateCell(value || "-", width - 16)}`;
+	return `│${body.padEnd(width - 2)}│`;
+}
+
+function formatContainerCard(row: ComposePsRow, width: number): string[] {
+	const project = labelValue(row.Labels, "com.docker.compose.project") ?? "-";
+	const service = row.Service ?? labelValue(row.Labels, "com.docker.compose.service") ?? "-";
+	const name = row.Name ?? row.Names ?? "?";
+	const icon = stateIcon(row);
+	const state = row.State ?? "unknown";
+	const h = health(row);
+	const status = row.Status ?? row.RunningFor ?? "";
+	const title = ` ${icon} ${name} `.padEnd(width - 2, "─");
+	return [
+		`┌${title}┐`,
+		cardLine("project", project, width),
+		cardLine("service", service, width),
+		cardLine("state", h ? `${state} (${h})` : state, width),
+		cardLine("status", status, width),
+		cardLine("ports", normalizePorts(row.Ports), width),
+		`└${"─".repeat(width - 2)}┘`,
+	];
+}
+
+export function formatContainerRows(rows: ComposePsRow[], emptyMessage: string): string {
+	if (rows.length === 0) return emptyMessage;
+	const width = cardWidth(rows);
+	return rows.flatMap((row) => formatContainerCard(row, width)).join("\n");
+}
+
+export function formatComposeStatusJson(output: string): string {
+	return formatContainerRows(parseJsonLines(output), "No compose containers found for this service.");
+}
+
+export function formatDockerPsJson(output: string, all: boolean): string {
+	return formatContainerRows(parseJsonLines(output), all ? "No containers found." : "No running containers found.");
+}
+
+export interface HomelabInput {
+	action: HomelabAction;
+	service?: string;
+	flags?: HomelabFlags;
+	tail?: number;
+}
+
+export interface HomelabActionResult {
+	text: string;
+	details: HomelabDetails;
+}
+
+/** Execute a homelab action through the shared validator/runner path. */
+export async function executeHomelabAction(
+	pi: Pick<ExtensionAPI, "exec">,
+	cwd: string,
+	params: HomelabInput,
+	signal?: AbortSignal,
+	onProgress?: (label: string, elapsedMs: number) => void,
+): Promise<HomelabActionResult> {
+	const checked = checkParams(params.action, params.service, params.flags, params.tail);
+	if (!checked.ok) throw new Error(checked.error);
+
+	// requireBaseDir guarantees manage-container.sh exists, so stack actions are safe.
+	const baseDir = requireBaseDir(cwd);
+	if (checked.service) {
+		const svc = checkService(baseDir, checked.service);
+		if (!svc.ok) throw new Error(svc.error);
+	}
+
+	const cmd = buildCommand(baseDir, checked.action, checked.service, checked.flags, checked.tail);
+	const startedAt = Date.now();
+	const outcome = await execHomelabCommand((command, args, options) => pi.exec(command, args, options), cmd, signal, onProgress);
+	if (!outcome.ok) throw new Error(outcome.error + (outcome.output ? `\n${outcome.output.slice(-4000)}` : ""));
+
+	const durationMs = Date.now() - startedAt;
+	let outputText = outcome.output;
+	let logDetails: LogDetails | undefined;
+	let structured = false;
+
+	if (checked.action === "status" && checked.service) {
+		outputText = formatComposeStatusJson(outcome.output);
+		structured = true;
+	} else if (checked.action === "status") {
+		outputText = formatDockerPsJson(outcome.output, false);
+		structured = true;
+	} else if (checked.action === "list") {
+		outputText = formatDockerPsJson(outcome.output, true);
+		structured = true;
+	} else if (checked.action === "logs") {
+		const { text, details } = await processLogOutput(outcome.output, checked.service!);
+		outputText = text;
+		logDetails = details;
+		if (details.truncated && details.fullOutputPath) {
+			outputText += `\n\n[Showing the last ${details.outputLines} of ${details.totalLines} lines (${formatSize(details.totalBytes)}). Full output saved to: ${details.fullOutputPath}]`;
+		}
+	} else {
+		const trunc = truncateTail(outputText, { maxLines: DEFAULT_MAX_LINES, maxBytes: DEFAULT_MAX_BYTES });
+		outputText = trunc.content;
+	}
+
+	if (!outputText.trim()) outputText = "(no output)";
+
+	return {
+		text: outputText,
+		details: {
+			action: checked.action,
+			service: checked.service,
+			flags: checked.flags,
+			tail: checked.action === "logs" ? checked.tail : undefined,
+			lineCount: outputText.split("\n").length,
+			durationMs,
+			logs: logDetails,
+			structured,
+		},
+	};
+}
+
+export interface RenderableHomelabResult {
+	content?: Array<{ type: string; text?: string }>;
+	details?: HomelabDetails;
+}
+
+export function renderHomelabResult(
+	result: RenderableHomelabResult,
+	{ expanded, isPartial }: { expanded: boolean; isPartial: boolean },
+	theme: { fg(color: string, text: string): string },
+) {
+	const details = result.details as HomelabDetails | undefined;
+
+	if (isPartial) {
+		const c = result.content?.[0];
+		const t = c && c.type === "text" ? c.text ?? "Working…" : "Working…";
+		return new Text(theme.fg("warning", t), 0, 0);
+	}
+
+	const c = result.content?.[0];
+	const output = c && c.type === "text" ? c.text ?? "" : "";
+	const lines = output ? output.split("\n") : [];
+
+	let head: string;
+	if (!details) {
+		head = theme.fg("dim", output.slice(0, 300) || "(no output)");
+	} else {
+		const label = details.service ? `${details.action} ${details.service}` : details.action;
+		const dur = `${(details.durationMs / 1000).toFixed(1)}s`;
+		switch (details.action) {
+			case "logs": {
+				const log = details.logs;
+				head = theme.fg("success", `${details.lineCount} log lines (${dur})`);
+				if (log?.truncated) {
+					head += theme.fg(
+						"warning",
+						` — showing last ${log.outputLines} of ${log.totalLines} (${formatSize(log.totalBytes)}${log.fullOutputPath ? ", full output saved" : ""})`,
+					);
+				}
+				break;
+			}
+			case "up":
+			case "restart":
+			case "down":
+				head = theme.fg("success", `${label}${details.flags ? ` ${details.flags}` : ""} — ${dur}`);
+				break;
+			default:
+				head = theme.fg("success", `${label} — ${dur}`);
+		}
+	}
+
+	if (expanded && output) {
+		const shown = lines.slice(0, 25);
+		for (const line of shown) head += `\n${theme.fg("dim", line)}`;
+		if (lines.length > 25) head += `\n${theme.fg("muted", `… ${lines.length - 25} more lines`)}`;
+		if (details?.logs?.fullOutputPath) head += `\n${theme.fg("dim", `Full logs: ${details.logs.fullOutputPath}`)}`;
+		if (details) head += `\n${theme.fg("muted", "(Ctrl+O to collapse)")}`;
+	} else if (output && details?.action === "logs") {
+		const compactLines = lines.filter((line) => line.trim());
+		const preview = compactLines.slice(-8);
+		for (const line of preview) head += `\n${theme.fg("dim", line)}`;
+		if (compactLines.length > preview.length) head += `\n${theme.fg("muted", `… ${compactLines.length - preview.length} earlier lines`)}`;
+		head += `\n${theme.fg("muted", "(Ctrl+O to expand)")}`;
+	} else if (output && (details?.action === "status" || details?.action === "list")) {
+		const compactLines = lines.filter((line) => line.trim());
+		const preview = compactLines.slice(0, 12);
+		for (const line of preview) head += `\n${theme.fg("dim", line)}`;
+		if (compactLines.length > preview.length) head += `\n${theme.fg("muted", `… ${compactLines.length - preview.length} more lines`)}`;
+		head += `\n${theme.fg("muted", "(Ctrl+O to expand)")}`;
+	} else {
+		head += ` ${theme.fg("muted", "(Ctrl+O to expand)")}`;
+	}
+
+	return new Text(head, 0, 0);
+}
+
+// ─── Tool registration ───────────────────────────────────────────────────
+
+export function registerHomelabTool(pi: ExtensionAPI) {
+	pi.registerTool({
+		name: "homelab",
+		label: "Homelab",
+		description:
+			"Manage Docker services on this homelab server. Actions: list (all containers), status (global or one service), logs (service log tail), up (start, optional pull/build flags), restart, down (stop & remove, requires confirmation).",
+		promptSnippet: "Docker homelab service management: list, status, logs, up, restart, down",
+		promptGuidelines: [
+			"Use homelab for Docker homelab service operations instead of running docker or manage-container.sh via bash.",
+			"Use homelab list to discover valid service names before calling homelab status/logs/up/restart/down.",
+		],
+		parameters: Type.Object({
+			action: StringEnum(["status", "list", "logs", "up", "restart", "down"] as const, {
+				description: "Operation to perform",
+			}),
+			service: Type.Optional(
+				Type.String({
+					description:
+						"Service directory name (e.g. 'caddy'). Required for logs/up/restart/down; optional for status (omit for global status).",
+				}),
+			),
+			flags: Type.Optional(
+				StringEnum(["p", "b", "pb"] as const, {
+					description: "up/restart only: p = pull images, b = build, pb = both",
+				}),
+			),
+			tail: Type.Optional(
+				Type.Integer({
+					minimum: 1,
+					maximum: MAX_LOG_TAIL,
+					description: `logs only: number of log lines (default ${DEFAULT_LOG_TAIL})`,
+				}),
+			),
+		}),
+
+		async execute(_toolCallId, params, signal, onUpdate, ctx) {
+			const result = await executeHomelabAction(
+				pi,
+				ctx.cwd,
+				params,
+				signal,
+				(label, elapsedMs) => {
+					onUpdate?.({
+						content: [{ type: "text", text: `${label}… (${Math.round(elapsedMs / 1000)}s elapsed)` }],
+					});
+				},
+			);
+			return { content: [{ type: "text", text: result.text }], details: result.details };
+		},
+
+		// ── Rendering ──
+
+		renderCall(args, theme) {
+			let text = theme.fg("toolTitle", theme.bold("homelab "));
+			text += theme.fg("accent", args.action);
+			if (args.service) text += ` ${theme.fg("muted", args.service)}`;
+			if (args.flags) text += theme.fg("dim", ` ${args.flags}`);
+			if (args.action === "logs" && args.tail) text += theme.fg("dim", ` tail=${args.tail}`);
+			return new Text(text, 0, 0);
+		},
+
+		renderResult(result, { expanded, isPartial }, theme) {
+			return renderHomelabResult(result, { expanded, isPartial }, theme);
+		},
+	});
+}
