@@ -31,6 +31,27 @@ After installing, restart Pi or run `/reload`. Verify with `pi list`.
 - `gh` authenticated for the vendored GitHub PR status extension.
 - herdr for `harness-context` and the herdr-managed agent-state integration.
 
+## Data and external calls
+
+This repository contains no credentials, API keys, SSH keys, private IPs,
+session files, or user files. It also makes no network calls by default.
+There are two bundled features that can contact external services:
+
+| Feature | Default | What leaves the machine |
+|---|---|---|
+| `vendor/powerline-footer` auto-follow-up | Off (`powerline.autoFollowUp` defaults to `false`) | If enabled **and** `TYPESAFE_API_KEY` is set, it sends the current user prompt, a snippet of the agent's latest reply, and the new message to `api.typesafe.ai` to decide steer-vs-follow-up. This is the only path that sends conversation content externally. |
+| `vendor/powerline-footer` currency rates | Background, when cost currency is non-USD | A GET request to jsDelivr for public exchange rates. No local data is sent. |
+| `vendor/pi-github-pr` | Background in Git repos | Calls the authenticated `gh` CLI to fetch PR metadata from GitHub. No local files or conversation are sent. |
+
+`extensions/*`, `extras/homelab-docker`, and `extras/herdr-managed` are
+local-only: they read local files/status, run local commands, or write local
+state. The third-party npm packages installed by `install.sh` are not vendored
+here and may have their own network behavior; review them separately.
+
+The docs mention the hostname `homelab-compute` and the optional path
+`/srv/homelab/docker`; neither is a secret. Remove them if you prefer to keep
+the public repo free of internal naming.
+
 ## What this repository packages
 
 Everything below is discovered from the package's `pi` manifest.
