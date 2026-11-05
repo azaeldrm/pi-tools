@@ -23,6 +23,14 @@ also copies the optional `homelab-docker` extension into
 
 After installing, restart Pi or run `/reload`. Verify with `pi list`.
 
+## Requirements
+
+- Pi 1.4.0 or newer.
+- `ffmpeg` on `PATH` for the Procession startup banner.
+- Linux sysfs and, for NVIDIA GPUs, `nvidia-smi` for `local-hardware`.
+- `gh` authenticated for the vendored GitHub PR status extension.
+- herdr for `harness-context` and the herdr-managed agent-state integration.
+
 ## What this repository packages
 
 Everything below is discovered from the package's `pi` manifest.
@@ -37,7 +45,7 @@ Everything below is discovered from the package's `pi` manifest.
 | `extensions/protected-paths.ts` | Blocks writes through `.git/`/`node_modules/` and confirms env files. |
 | `extensions/working-indicator.ts` | `/working-indicator` dot/pulse/none/spinner customization. |
 | `extensions/procession-banner/index.ts` | Top banner and startup panel for the Procession theme. |
-| `extensions/subagent/index.ts` | Isolated subagent tool (single, parallel, chain). Bundles scout/planner/reviewer/worker agents. |
+| `extensions/subagent/index.ts` | Isolated subagent tool (single, parallel, chain). Bundles scout/planner/reviewer/worker agents and discovers package-local agents before `~/.pi/agent/agents/`. |
 | `vendor/powerline-footer/` | Locally modified `pi-powerline-footer` 0.19.1 fork: responsive multi-row layout, hardware row, pinned right segments, local-cost tweaks. |
 | `vendor/pi-github-pr/` | Locally modified `@narumitw/pi-github-pr` 0.49.8 fork: linked PR number and closed/merged PR handling. |
 | `themes/azael.json` | Warm brown/pink theme. |

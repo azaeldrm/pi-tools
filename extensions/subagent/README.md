@@ -23,33 +23,39 @@ subagent/
 │   ├── planner.md       # Creates implementation plans
 │   ├── reviewer.md      # Code review
 │   └── worker.md        # General-purpose (full capabilities)
-└── prompts/             # Workflow presets (prompt templates)
-    ├── implement.md     # scout -> planner -> worker
-    ├── scout-and-plan.md    # scout -> planner (no implementation)
-    └── implement-and-review.md  # worker -> reviewer -> worker
+```
+
+Workflow prompts live in the package root under `prompts/`.
+
+```text
+prompts/                       # Workflow presets (prompt templates)
+├── implement.md               # scout -> planner -> worker
+├── scout-and-plan.md          # scout -> planner (no implementation)
+└── implement-and-review.md    # worker -> reviewer -> worker
 ```
 
 ## Installation
 
-From the repository root, symlink the files:
+This copy is bundled by the `azaeldrm/pi-tools` package:
 
 ```bash
-# Symlink the extension (must be in a subdirectory with index.ts)
+pi install git:github.com/azaeldrm/pi-tools
+```
+
+The extension discovers agents bundled in `extensions/subagent/agents/` and
+agents in `~/.pi/agent/agents/`. User-level agents override bundled agents with
+the same name. The workflow prompts in this repository's `prompts/` directory
+are loaded by the package too.
+
+For a standalone checkout, symlink the files as in the upstream example:
+
+```bash
 mkdir -p ~/.pi/agent/extensions/subagent
-ln -sf "$(pwd)/packages/coding-agent/examples/extensions/subagent/index.ts" ~/.pi/agent/extensions/subagent/index.ts
-ln -sf "$(pwd)/packages/coding-agent/examples/extensions/subagent/agents.ts" ~/.pi/agent/extensions/subagent/agents.ts
+ln -sf "$(pwd)/extensions/subagent/index.ts" ~/.pi/agent/extensions/subagent/index.ts
+ln -sf "$(pwd)/extensions/subagent/agents.ts" ~/.pi/agent/extensions/subagent/agents.ts
 
-# Symlink agents
 mkdir -p ~/.pi/agent/agents
-for f in packages/coding-agent/examples/extensions/subagent/agents/*.md; do
-  ln -sf "$(pwd)/$f" ~/.pi/agent/agents/$(basename "$f")
-done
-
-# Symlink workflow prompts
-mkdir -p ~/.pi/agent/prompts
-for f in packages/coding-agent/examples/extensions/subagent/prompts/*.md; do
-  ln -sf "$(pwd)/$f" ~/.pi/agent/prompts/$(basename "$f")
-done
+cp extensions/subagent/agents/*.md ~/.pi/agent/agents/
 ```
 
 ## Security Model
