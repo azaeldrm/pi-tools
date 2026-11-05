@@ -23,6 +23,74 @@ also copies the optional `homelab-docker` extension into
 
 After installing, restart Pi or run `/reload`. Verify with `pi list`.
 
+## Porting to a machine
+
+The established process is one install command plus optional cleanup of old
+machine-local copies. The package is the source of truth for the shared tools.
+
+### Fresh machine (no old local copies)
+
+```bash
+mkdir -p ~/.local/share
+git clone https://github.com/azaeldrm/pi-tools.git ~/.local/share/pi-tools
+~/.local/share/pi-tools/install.sh
+# optional: add the homelab-docker extension
+~/.local/share/pi-tools/install.sh --homelab
+```
+
+Or, if you only want the core package and already know the npm packages:
+
+```bash
+pi install git:github.com/azaeldrm/pi-tools
+```
+
+### Machine that already has the old local copies
+
+For example, homelab-compute currently has local extension files and two local
+package directories. Install the package first, then remove the local copies it
+now owns so Pi does not load duplicates:
+
+```bash
+cd ~/code/pi-tools && ./install.sh
+
+rm -f ~/.pi/agent/extensions/context-meter.ts \
+      ~/.pi/agent/extensions/harness-context.ts \
+      ~/.pi/agent/extensions/inline-bash.ts \
+      ~/.pi/agent/extensions/local-hardware.ts \
+      ~/.pi/agent/extensions/permission-gate.ts \
+      ~/.pi/agent/extensions/protected-paths.ts \
+      ~/.pi/agent/extensions/working-indicator.ts
+rm -rf ~/.pi/agent/extensions/procession-banner \
+       ~/.pi/agent/extensions/subagent
+rm -f ~/.pi/agent/extensions/powerline-footer/theme.json
+
+pi remove ~/.pi/agent/local-packages/powerline-footer
+pi remove ~/.pi/agent/local-packages/github-pr
+rm -rf ~/.pi/agent/local-packages/powerline-footer \
+       ~/.pi/agent/local-packages/github-pr
+```
+
+Keep these machine-local extras:
+
+```text
+~/.pi/agent/extensions/herdr-agent-state.ts         # herdr installs/manages this
+~/.pi/agent/extensions/homelab-docker/              # optional extra, not in the package
+```
+
+Run `/reload` or restart Pi. If you want the homelab Docker tool, copy it with
+`./install.sh --homelab` instead of removing that directory.
+
+### This workstation
+
+The repo already exists at `~/code/pi-tools`. The short version is:
+
+```bash
+cd ~/code/pi-tools && ./install.sh
+rm -f ~/.pi/agent/extensions/harness-context.ts   # package owns it now
+```
+
+Keep `~/.pi/agent/extensions/herdr-agent-state.ts`; herdr manages it.
+
 ## Requirements
 
 - Pi 1.4.0 or newer.
@@ -34,8 +102,8 @@ After installing, restart Pi or run `/reload`. Verify with `pi list`.
 ## Data and external calls
 
 This repository contains no credentials, API keys, SSH keys, private IPs,
-session files, or user files. It also makes no network calls by default.
-There are two bundled features that can contact external services:
+session files, or user files. It also makes no network calls by default. Three bundled features can contact
+external services:
 
 | Feature | Default | What leaves the machine |
 |---|---|---|
@@ -161,18 +229,12 @@ The package supplies the extension and themes, but not a machine's
 }
 ```
 
-## Migrating homelab-compute away from local package paths
+## Migrating homelab-compute
 
-Once this package is pushed, replace the two local package declarations:
-
-```bash
-pi remove ~/.pi/agent/local-packages/powerline-footer
-pi remove ~/.pi/agent/local-packages/github-pr
-pi install git:github.com/azaeldrm/pi-tools
-```
-
-The vendored copies of both forks are loaded by the package, so the settings
-entries pointing at the machine-local directories are no longer needed.
+Use the cleanup steps under [Porting to a machine](#porting-to-a-machine):
+install the package, remove the old local extension copies and local package
+directories, keep `herdr-agent-state.ts` and optionally `homelab-docker/`, then
+run `/reload`.
 
 ## Pinning and updating
 
