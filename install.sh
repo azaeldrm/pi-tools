@@ -82,10 +82,13 @@ status_for_file() {
 
 status_for_dir() {
   local src="$1" dest="$2"
+  local diff_file="/tmp/pi-tools-diff.$$"
   if [[ ! -e "$dest" ]]; then printf 'missing'; return 0; fi
   if [[ ! -e "$src" ]]; then printf 'package-source-missing'; return 0; fi
-  if diff -rq "$src" "$dest" >/tmp/pi-tools-diff.$$ 2>&1; then
+  if diff -rq "$src" "$dest" >"$diff_file" 2>&1; then
     printf 'identical'
+  elif ! grep -qE '^Files ' "$diff_file"; then
+    printf 'package-superset'
   else
     printf 'DIFFERS'
   fi
@@ -126,7 +129,10 @@ clean_dir() {
   if [[ "$status" == missing ]]; then return 0; fi
 
   printf '  %-58s %s/\n' "$label" "$status"
-  if [[ "$status" == identical ]]; then
+  if [[ "$status" == identical || "$status" == package-superset ]]; then
+    if [[ "$status" == package-superset ]]; then
+      echo '        (package adds files, but local files match)'
+    fi
     if [[ "$DRY_RUN" == 1 || "$CLEAN_DUPLICATES" == 0 ]]; then
       echo '        -> would remove directory'
     else
@@ -164,7 +170,10 @@ if [[ "$CLEAN_DUPLICATES" == 1 || "$DRY_RUN" == 1 ]]; then
     if [[ -e "$dest" ]]; then
       status=$(status_for_dir "$src" "$dest")
       printf '  %-58s %s/\n' "local-packages/$pkg" "$status"
-      if [[ "$status" == identical ]]; then
+      if [[ "$status" == identical || "$status" == package-superset ]]; then
+        if [[ "$status" == package-superset ]]; then
+          echo '        (package adds files, but local files match)'
+        fi
         if [[ "$DRY_RUN" == 1 || "$CLEAN_DUPLICATES" == 0 ]]; then
           echo '        -> would remove settings entry + directory'
         else

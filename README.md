@@ -47,27 +47,24 @@ pi install git:github.com/azaeldrm/pi-tools
 ### Machine that already has the old local copies
 
 For example, homelab-compute currently has local extension files and two local
-package directories. Install the package first, then remove the local copies it
-now owns so Pi does not load duplicates:
+package directories. Review and clean them in two steps:
 
 ```bash
-cd ~/code/pi-tools && ./install.sh
+cd ~/code/pi-tools
+./install.sh --clean-duplicates --dry-run   # review; changes nothing
+./install.sh --clean-duplicates             # install + remove identical copies
+```
 
-rm -f ~/.pi/agent/extensions/context-meter.ts \
-      ~/.pi/agent/extensions/harness-context.ts \
-      ~/.pi/agent/extensions/inline-bash.ts \
-      ~/.pi/agent/extensions/local-hardware.ts \
-      ~/.pi/agent/extensions/permission-gate.ts \
-      ~/.pi/agent/extensions/protected-paths.ts \
-      ~/.pi/agent/extensions/working-indicator.ts
-rm -rf ~/.pi/agent/extensions/procession-banner \
-       ~/.pi/agent/extensions/subagent
-rm -f ~/.pi/agent/extensions/powerline-footer/theme.json
+The cleanup removes local copies that are identical to the package. If the
+dry-run reports `DIFFERS` for a directory (for example `subagent`), review it
+and remove it manually if it is the old pre-package copy:
 
+```bash
+rm -rf ~/.pi/agent/extensions/subagent
+rm -rf ~/.pi/agent/local-packages/powerline-footer
+rm -rf ~/.pi/agent/local-packages/github-pr
 pi remove ~/.pi/agent/local-packages/powerline-footer
 pi remove ~/.pi/agent/local-packages/github-pr
-rm -rf ~/.pi/agent/local-packages/powerline-footer \
-       ~/.pi/agent/local-packages/github-pr
 ```
 
 Keep these machine-local extras:
