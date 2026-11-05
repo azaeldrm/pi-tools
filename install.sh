@@ -17,6 +17,22 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SOURCE="${PI_TOOLS_SOURCE:-git:github.com/azaeldrm/pi-tools}"
 AGENT_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
 
+usage() {
+  cat <<'EOF'
+Install the portable Pi tool set on a machine.
+
+  ./install.sh                         # core package + third-party npm packages
+  ./install.sh --homelab               # also install the homelab-docker extension
+  ./install.sh --no-npm                # core package only
+  ./install.sh --clean-duplicates      # remove package-owned local copies after install
+  ./install.sh --clean-duplicates --dry-run
+                                       # show what cleanup would remove; change nothing
+
+Core package source can be overridden with PI_TOOLS_SOURCE.
+Optional extras need the repository checkout (this script's directory).
+EOF
+}
+
 WITH_HOMELAB=0
 WITH_NPM=1
 CLEAN_DUPLICATES=0
@@ -29,7 +45,7 @@ for arg in "$@"; do
     --clean-duplicates) CLEAN_DUPLICATES=1 ;;
     --dry-run) DRY_RUN=1 ;;
     -h|--help)
-      sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
+      usage
       exit 0
       ;;
     *)
