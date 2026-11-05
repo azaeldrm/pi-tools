@@ -1,0 +1,58 @@
+{
+  "theme": "azael",
+  "defaultThinkingLevel": "high",
+  "hideThinkingBlock": false,
+  "powerline": {
+    "placement": "above",
+    "separator": "dot",
+    "cost": {
+      "subscriptionDisplay": "reported-cost"
+    },
+    "disabledSegments": [
+      "git"
+    ],
+    "layout": {
+      "left": [
+        "custom:model-auth",
+        "custom:thinking-icon",
+        "shell_mode",
+        "path",
+        "cache_read",
+        "cache_write",
+        "cost",
+        "queue"
+      ],
+      "right": [
+        "custom:context-meter"
+      ]
+    },
+    "customItems": [
+      {
+        "id": "model-auth",
+        "statusKey": "model-auth",
+        "position": "left",
+        "selfColorize": true
+      },
+      {
+        "id": "thinking-icon",
+        "statusKey": "thinking-icon",
+        "position": "left",
+        "selfColorize": true
+      },
+      {
+        "id": "context-meter",
+        "statusKey": "context-meter",
+        "position": "right",
+        "selfColorize": true
+      }
+    ]
+  },
+  "packageExtensions": [
+    "extensions/*.ts",
+    "extensions/procession-banner/index.ts",
+    "extensions/subagent/index.ts",
+    "vendor/powerline-footer/index.ts",
+    "vendor/pi-github-pr/dist/index.ts",
+    "!extensions/local-hardware.ts"
+  ]
+}

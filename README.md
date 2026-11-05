@@ -17,9 +17,12 @@ pi install npm:@juicesharp/rpiv-ask-user-question
 pi install npm:pi-compact-tools
 ```
 
-Or run `./install.sh` from a checkout to do both. `./install.sh --homelab`
-also copies the optional `homelab-docker` extension into
-`~/.pi/agent/extensions/`.
+Or run `./install.sh` from a checkout to do the full port: it installs the
+package, the third-party npm packages, applies `profiles/ui.json` (theme,
+powerline, default thinking level) and merges `profiles/llama-cpp-models.json`
+(model display names and thinking-level maps). `./install.sh --homelab` also
+copies the optional `homelab-docker` extension into
+`~/.pi/agent/extensions/`. Use `--no-ui` or `--no-models` to skip either profile.
 
 After installing, restart Pi or run `/reload`. Verify with `pi list`.
 
@@ -36,8 +39,6 @@ git clone https://github.com/azaeldrm/pi-tools.git ~/.local/share/pi-tools
 ~/.local/share/pi-tools/install.sh
 # optional: add the homelab-docker extension
 ~/.local/share/pi-tools/install.sh --homelab
-# optional: merge the llama.cpp display-name/compat profile into ~/.pi/agent/models.json
-~/.local/share/pi-tools/install.sh --models
 ```
 
 Or, if you only want the core package and already know the npm packages:
@@ -102,11 +103,11 @@ Keep `~/.pi/agent/extensions/herdr-agent-state.ts`; herdr manages it.
 
 `profiles/llama-cpp-models.json` contains the llama.cpp `modelOverrides` used
 in the homelab-compute UI, including display names such as `Maya-XS` for
-`deepseek-v4.1-flash`. Apply it optionally with:
+`deepseek-v4.1-flash`. The standard `./install.sh` applies it automatically;
+the `--models` flag also applies it explicitly, and `--no-models` skips it.
 
 ```bash
-./install.sh --models
-./install.sh --models --dry-run   # preview the merge
+./install.sh --dry-run   # preview both profiles and cleanup
 ```
 
 The merge is additive: it writes into `~/.pi/agent/models.json` and preserves
@@ -253,7 +254,7 @@ run `/reload`.
 ## Pinning and updating
 
 ```bash
-pi install git:github.com/azaeldrm/pi-tools@v0.2.0
+pi install git:github.com/azaeldrm/pi-tools@v0.3.0
 pi update --extensions
 ```
 

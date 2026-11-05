@@ -9,10 +9,12 @@ set -euo pipefail
 #   ./install.sh --clean-duplicates      # remove package-owned local copies after install
 #   ./install.sh --clean-duplicates --dry-run
 #                                        # show what cleanup would remove; change nothing
-#   ./install.sh --models                # merge profiles/llama-cpp-models.json into models.json
-#   ./install.sh --models --dry-run      # show the model-profile merge plan; change nothing
+#   ./install.sh --no-ui                 # skip the theme/powerline/thinking-default profile
+#   ./install.sh --no-models             # skip the llama.cpp model display-name profile
 #
-# Core package source can be overridden with PI_TOOLS_SOURCE.
+# By default the install also applies profiles/ui.json and
+# profiles/llama-cpp-models.json. Core package source can be overridden with
+# PI_TOOLS_SOURCE. Optional extras need the repository checkout. can be overridden with PI_TOOLS_SOURCE.
 # Optional extras need the repository checkout (this script's directory).
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -29,9 +31,10 @@ Install the portable Pi tool set on a machine.
   ./install.sh --clean-duplicates      # remove package-owned local copies after install
   ./install.sh --clean-duplicates --dry-run
                                        # show what cleanup would remove; change nothing
-  ./install.sh --models                # merge profiles/llama-cpp-models.json into models.json
-  ./install.sh --models --dry-run      # show the model-profile merge plan; change nothing
+  ./install.sh --no-ui                 # skip the UI profile
+  ./install.sh --no-models             # skip the model profile
 
+Default install also applies profiles/ui.json and profiles/llama-cpp-models.json.
 Core package source can be overridden with PI_TOOLS_SOURCE.
 Optional extras need the repository checkout (this script's directory).
 EOF
@@ -39,7 +42,8 @@ EOF
 
 WITH_HOMELAB=0
 WITH_NPM=1
-WITH_MODELS=0
+WITH_UI=1
+WITH_MODELS=1
 CLEAN_DUPLICATES=0
 DRY_RUN=0
 
@@ -47,6 +51,8 @@ for arg in "$@"; do
   case "$arg" in
     --homelab) WITH_HOMELAB=1 ;;
     --no-npm) WITH_NPM=0 ;;
+    --no-ui) WITH_UI=0 ;;
+    --no-models) WITH_MODELS=0 ;;
     --models) WITH_MODELS=1 ;;
     --clean-duplicates) CLEAN_DUPLICATES=1 ;;
     --dry-run) DRY_RUN=1 ;;
@@ -63,6 +69,10 @@ done
 
 if [[ "$DRY_RUN" == 1 ]]; then
   echo "DRY RUN — no installs or file changes will be made."
+  if [[ "$WITH_UI" == 1 ]]; then
+    echo "UI profile: ${ROOT}/profiles/ui.json"
+    echo "  would apply theme/powerline/default thinking into ${AGENT_DIR}/settings.json (backup first)"
+  fi
   if [[ "$WITH_MODELS" == 1 ]]; then
     echo "Model profile: ${ROOT}/profiles/llama-cpp-models.json"
     echo "  would merge into ${AGENT_DIR}/models.json (backup first)"
@@ -97,11 +107,21 @@ if [[ "$DRY_RUN" == 0 ]]; then
   fi
 fi
 
+if [[ "$WITH_UI" == 1 && "$DRY_RUN" == 0 ]]; then
+  echo "Applying UI profile"
+  mkdir -p "$AGENT_DIR"
+  if [[ -f "$AGENT_DIR/settings.json" ]]; then
+    cp "$AGENT_DIR/settings.json" "$AGENT_DIR/settings.json.bak-$(date -u +%Y%m%d-%H%M%S)-pre-pi-tools-ui"
+  fi
+  node "$ROOT/scripts/apply-ui.mjs" "$AGENT_DIR/settings.json" "$ROOT/profiles/ui.json" "$SOURCE"
+  echo "Applied to $AGENT_DIR/settings.json"
+fi
+
 if [[ "$WITH_MODELS" == 1 && "$DRY_RUN" == 0 ]]; then
   echo "Applying llama.cpp model profile"
   mkdir -p "$AGENT_DIR"
   if [[ -f "$AGENT_DIR/models.json" ]]; then
-    cp "$AGENT_DIR/models.json" "$AGENT_DIR/models.json.bak-$(date -u +%Y%m%d-%H%M%S)-pre-pi-tools-profile"
+    cp "$AGENT_DIR/models.json" "$AGENT_DIR/models.json.bak-$(date -u +%Y%m%d-%H%M%S)-pre-pi-tools-model"
   fi
   node "$ROOT/scripts/merge-models.mjs" "$AGENT_DIR/models.json" "$ROOT/profiles/llama-cpp-models.json"
   echo "Merged into $AGENT_DIR/models.json"
