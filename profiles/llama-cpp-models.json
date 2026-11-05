@@ -1,0 +1,79 @@
+{
+  "providers": {
+    "llama.cpp": {
+      "modelOverrides": {
+        "deepseek-v4.1-flash": {
+          "maxTokens": 524288,
+          "name": "Maya-XS",
+          "reasoning": true,
+          "thinkingLevelMap": {
+            "off": "none",
+            "minimal": null,
+            "low": "low",
+            "medium": null,
+            "high": "high",
+            "xhigh": null,
+            "max": "max"
+          },
+          "compat": {
+            "supportsStore": false,
+            "supportsDeveloperRole": false,
+            "supportsReasoningEffort": true,
+            "supportsUsageInStreaming": true,
+            "supportsStrictMode": false,
+            "maxTokensField": "max_tokens",
+            "thinkingFormat": "openai"
+          }
+        },
+        "qwen3.8-flash-next-unsloth-ud-iq4_xs": {
+          "name": "Hoxus-4",
+          "reasoning": true,
+          "thinkingLevelMap": {
+            "off": "none",
+            "minimal": null,
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": null
+          },
+          "compat": {
+            "supportsReasoningEffort": true,
+            "thinkingFormat": "openai"
+          }
+        },
+        "qwen3.8-flash-next-unsloth-ud-q5_k_xl": {
+          "name": "Hoxus-5",
+          "reasoning": true,
+          "thinkingLevelMap": {
+            "off": "none",
+            "minimal": null,
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": null
+          },
+          "compat": {
+            "supportsReasoningEffort": true,
+            "thinkingFormat": "openai"
+          }
+        },
+        "glm-5.3-flash": {
+          "name": "Maya",
+          "reasoning": true,
+          "thinkingLevelMap": {
+            "off": "none",
+            "minimal": null,
+            "low": "low",
+            "medium": null,
+            "high": "high",
+            "xhigh": null,
+            "max": "max"
+          },
+          "compat": {
+            "supportsReasoningEffort": true
+          }
+        }
+      }
+    }
+  }
+}
