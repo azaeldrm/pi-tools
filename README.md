@@ -58,9 +58,10 @@ cd ~/code/pi-tools
 ./install.sh --clean-duplicates             # install + remove identical copies
 ```
 
-The cleanup removes local copies that are identical to the package. If the
-dry-run reports `DIFFERS` for a directory (for example `subagent`), review it
-and remove it manually if it is the old pre-package copy:
+The cleanup removes local copies of extensions, prompts, themes, agents, and
+local package directories that are identical to the package. If the dry-run
+reports `DIFFERS` for a directory (for example `subagent`), review it and
+remove it manually if it is the old pre-package copy:
 
 ```bash
 rm -rf ~/.pi/agent/extensions/subagent
@@ -254,7 +255,7 @@ run `/reload`.
 ## Pinning and updating
 
 ```bash
-pi install git:github.com/azaeldrm/pi-tools@v0.3.0
+pi install git:github.com/azaeldrm/pi-tools@v0.3.1
 pi update --extensions
 ```
 

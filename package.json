@@ -1,6 +1,6 @@
 {
   "name": "azaeldrm-pi-tools",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Portable Pi coding-agent extensions, prompts, themes, and statusline tools used across azaeldrm's machines.",
   "type": "module",
   "license": "MIT",

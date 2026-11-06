@@ -217,6 +217,17 @@ if [[ "$CLEAN_DUPLICATES" == 1 || "$DRY_RUN" == 1 ]]; then
   clean_dir  "subagent"               "$ROOT/extensions/subagent"               "$AGENT_DIR/extensions/subagent"
 
   echo
+  echo "Package-owned local prompts, themes, and agents:"
+  clean_file "prompts/implement.md"             "$ROOT/prompts/implement.md"             "$AGENT_DIR/prompts/implement.md"
+  clean_file "prompts/implement-and-review.md"  "$ROOT/prompts/implement-and-review.md"  "$AGENT_DIR/prompts/implement-and-review.md"
+  clean_file "prompts/scout-and-plan.md"        "$ROOT/prompts/scout-and-plan.md"        "$AGENT_DIR/prompts/scout-and-plan.md"
+  clean_file "themes/azael.json"                "$ROOT/themes/azael.json"                "$AGENT_DIR/themes/azael.json"
+  clean_file "themes/procession.json"           "$ROOT/themes/procession.json"           "$AGENT_DIR/themes/procession.json"
+  for agent in planner reviewer scout worker; do
+    clean_file "agents/${agent}.md" "$ROOT/extensions/subagent/agents/${agent}.md" "$AGENT_DIR/agents/${agent}.md"
+  done
+
+  echo
   echo "Legacy local package directories under ${AGENT_DIR}/local-packages:"
   for pkg in powerline-footer github-pr; do
     dest="$AGENT_DIR/local-packages/$pkg"
