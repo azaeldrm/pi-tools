@@ -206,7 +206,6 @@ if [[ "$CLEAN_DUPLICATES" == 1 || "$DRY_RUN" == 1 ]]; then
   echo "Package-owned local extensions under ${AGENT_DIR}/extensions:"
 
   clean_file "context-meter.ts"       "$ROOT/extensions/context-meter.ts"       "$AGENT_DIR/extensions/context-meter.ts"
-  clean_file "harness-context.ts"     "$ROOT/extensions/harness-context.ts"     "$AGENT_DIR/extensions/harness-context.ts"
   clean_file "inline-bash.ts"         "$ROOT/extensions/inline-bash.ts"         "$AGENT_DIR/extensions/inline-bash.ts"
   clean_file "local-hardware.ts"      "$ROOT/extensions/local-hardware.ts"      "$AGENT_DIR/extensions/local-hardware.ts"
   clean_file "permission-gate.ts"     "$ROOT/extensions/permission-gate.ts"     "$AGENT_DIR/extensions/permission-gate.ts"
@@ -259,6 +258,9 @@ if [[ "$CLEAN_DUPLICATES" == 1 || "$DRY_RUN" == 1 ]]; then
 
   echo
   echo "Kept machine-local extras:"
+  if [[ -e "$AGENT_DIR/extensions/harness-context.ts" ]]; then
+    echo "  ~/.pi/agent/extensions/harness-context.ts (herdr-harness managed)"
+  fi
   if [[ -e "$AGENT_DIR/extensions/herdr-agent-state.ts" ]]; then
     echo "  ~/.pi/agent/extensions/herdr-agent-state.ts (herdr-managed)"
   fi

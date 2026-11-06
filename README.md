@@ -87,10 +87,11 @@ The repo already exists at `~/code/pi-tools`. The short version is:
 
 ```bash
 cd ~/code/pi-tools && ./install.sh
-rm -f ~/.pi/agent/extensions/harness-context.ts   # package owns it now
 ```
 
-Keep `~/.pi/agent/extensions/herdr-agent-state.ts`; herdr manages it.
+Keep `~/.pi/agent/extensions/harness-context.ts` and
+`~/.pi/agent/extensions/herdr-agent-state.ts`; the herdr integrations manage
+both files.
 
 ## Requirements
 
@@ -143,7 +144,6 @@ Everything below is discovered from the package's `pi` manifest.
 | Resource | What it does |
 |---|---|
 | `extensions/context-meter.ts` | Model/auth/thinking badges and an 18-cell context-usage meter. |
-| `extensions/harness-context.ts` | Publishes context usage to `~/.config/harness/context` for herdr harness panes. |
 | `extensions/inline-bash.ts` | Expands `!{command}` inline bash in prompts before sending them. |
 | `extensions/local-hardware.ts` | CPU/GPU load and temperature status for `llama.cpp` sessions. |
 | `extensions/permission-gate.ts` | Confirms dangerous bash, homelab Docker, and forced git operations. |
@@ -166,7 +166,7 @@ in `~/.pi/agent/agents/` still override bundled agents with the same name.
 | Extra | Install | Why it is separate |
 |---|---|---|
 | `extras/homelab-docker/` | `./install.sh --homelab` (or copy to `~/.pi/agent/extensions/homelab-docker/`) | Needs a Docker homelab checkout (`manage-container.sh`); only useful on the homelab server. |
-| `extras/herdr-managed/herdr-agent-state.ts` | Do not install manually | Herdr installs and overwrites this integration itself. Kept here only for reference. |
+| `extras/herdr-managed/` | Do not install manually | Herdr and herdr-harness install and overwrite `herdr-agent-state.ts` and `harness-context.ts` themselves. Kept here only for reference. |
 
 ## Third-party packages
 
@@ -199,7 +199,7 @@ The node's `~/.pi/agent/settings.json` at the time this repo was built contained
 **Extensions**
 
 - `context-meter.ts`
-- `harness-context.ts`
+- `harness-context.ts` (herdr-harness managed, not packaged)
 - `herdr-agent-state.ts` (herdr-managed, not packaged)
 - `homelab-docker/` (`index.ts`, `command.ts`, `dashboard.ts`, `tools.ts`)
 - `inline-bash.ts`
@@ -255,7 +255,7 @@ run `/reload`.
 ## Pinning and updating
 
 ```bash
-pi install git:github.com/azaeldrm/pi-tools@v0.3.1
+pi install git:github.com/azaeldrm/pi-tools@v0.3.2
 pi update --extensions
 ```
 

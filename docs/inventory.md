@@ -20,7 +20,7 @@ each installed resource to its origin and whether this repository packages it.
 | Path under `~/.pi/agent/extensions/` | Role | Packaged here? |
 |---|---|---|
 | `context-meter.ts` | Context/model/thinking status meter | Yes |
-| `harness-context.ts` | Writes herdr harness context JSON | Yes |
+| `harness-context.ts` | Writes herdr harness context JSON | No; herdr-harness installs it (reference copy in `extras/herdr-managed/`) |
 | `herdr-agent-state.ts` | Herdr-managed pane/agent state | No; herdr owns this file |
 | `homelab-docker/` | `/homelab` command, dashboard, Docker tool | Optional `extras/homelab-docker/` |
 | `inline-bash.ts` | `!{command}` prompt expansion | Yes |

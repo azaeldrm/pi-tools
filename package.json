@@ -1,6 +1,6 @@
 {
   "name": "azaeldrm-pi-tools",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Portable Pi coding-agent extensions, prompts, themes, and statusline tools used across azaeldrm's machines.",
   "type": "module",
   "license": "MIT",
@@ -38,7 +38,6 @@
   "pi": {
     "extensions": [
       "./extensions/context-meter.ts",
-      "./extensions/harness-context.ts",
       "./extensions/inline-bash.ts",
       "./extensions/local-hardware.ts",
       "./extensions/permission-gate.ts",
